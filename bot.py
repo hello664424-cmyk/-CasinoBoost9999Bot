@@ -1,181 +1,192 @@
 import os
 import logging
-import asyncio
-import tempfile
-from telegram import Update, BotCommand
+from typing import Dict
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
-    MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
-    filters,
 )
 
-# Configure logging
+# Setup logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Retrieve Telegram Bot Token from environment variable
-TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
+# Simple in-memory user database
+# In production, replace this dictionary with PostgreSQL or SQLite
+users_db: Dict[int, int] = {}
+DEFAULT_BALANCE = 1000
 
+# Game emoji mappings for native Telegram animated dice
+GAMES = {
+    "slots": {"emoji": "🎰", "name": "Slots", "mult": 3},
+    "dice": {"emoji": "🎲", "name": "Dice", "mult": 2},
+    "bowling": {"emoji": "🎳", "name": "Bowling", "mult": 2},
+    "basketball": {"emoji": "🏀", "name": "Basketball", "mult": 2},
+    "darts": {"emoji": "🎯", "name": "Darts", "mult": 2},
+    "football": {"emoji": "⚽", "name": "Football", "mult": 2},
+}
 
-async def post_init(application) -> None:
-    """Automatically sets the bot command menu on startup."""
-    commands = [
-        BotCommand("start", "Start the bot & welcome message"),
-        BotCommand("help", "How to use the converter"),
-        BotCommand("about", "About the bot & technical details"),
+def get_user_balance(user_id: int) -> int:
+    if user_id not in users_db:
+        users_db[user_id] = DEFAULT_BALANCE
+    return users_db[user_id]
+
+def update_user_balance(user_id: int, amount: int) -> int:
+    current = get_user_balance(user_id)
+    users_db[user_id] = max(0, current + amount)
+    return users_db[user_id]
+
+def build_menu_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("🎰 Slots", callback_data="game_slots"),
+            InlineKeyboardButton("🎲 Dice", callback_data="game_dice"),
+        ],
+        [
+            InlineKeyboardButton("🎳 Bowling", callback_data="game_bowling"),
+            InlineKeyboardButton("🎯 Darts", callback_data="game_darts"),
+        ],
+        [
+            InlineKeyboardButton("🏀 Basketball", callback_data="game_basketball"),
+            InlineKeyboardButton("⚽ Football", callback_data="game_football"),
+        ],
+        [
+            InlineKeyboardButton("💰 Balance", callback_data="action_balance"),
+            InlineKeyboardButton("🎁 Daily Bonus (+500)", callback_data="action_bonus"),
+        ]
     ]
-    await application.bot.set_my_commands(commands)
-    logger.info("Bot commands menu set successfully.")
-
+    return InlineKeyboardMarkup(keyboard)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends a welcome message when /start is issued."""
-    welcome_msg = (
-        "👋 **Welcome to the Video Converter Bot!**\n\n"
-        "Send or forward me any video file (MKV, MOV, AVI, WEBM, FLV, etc.), "
-        "and I will convert it into a standard **MP4** format for you.\n\n"
-        "📌 **Available Commands:**\n"
-        "/start - Start the bot\n"
-        "/help - How to use this bot\n"
-        "/about - About the bot"
-    )
-    await update.message.reply_text(welcome_msg, parse_mode="Markdown")
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends instructions when /help is issued."""
-    help_text = (
-        "📖 **Help Guide:**\n\n"
-        "1. Simply send or forward a video file or document (up to 20MB due to Telegram Bot API limits).\n"
-        "2. The bot will automatically download and convert it to **MP4 (H.264/AAC)**.\n"
-        "3. Once finished, the converted MP4 will be sent back directly to your chat."
-    )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends info when /about is issued."""
-    about_text = (
-        "🤖 **Video Converter Bot**\n\n"
-        "Built with Python (`python-telegram-bot`) and FFmpeg.\n"
-        "Hosted securely on Railway."
-    )
-    await update.message.reply_text(about_text, parse_mode="Markdown")
-
-
-async def convert_to_mp4(input_path: str, output_path: str) -> bool:
-    """Runs FFmpeg asynchronously to convert the input video to MP4 (H.264/AAC)."""
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i", input_path,
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        output_path,
-    ]
-
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    user = update.effective_user
+    balance = get_user_balance(user.id)
+    
+    welcome_text = (
+        f"🎰 *Welcome to the Telegram Casino, {user.first_name}!*\n\n"
+        f"💵 *Your Balance:* `{balance}` Coins\n\n"
+        "Select a game below to place your bet (Default Bet: 50 Coins):"
     )
     
-    stdout, stderr = await process.communicate()
+    await update.message.reply_text(
+        text=welcome_text,
+        parse_mode="Markdown",
+        reply_markup=build_menu_keyboard()
+    )
 
-    if process.returncode != 0:
-        logger.error(f"FFmpeg error: {stderr.decode()}")
-        return False
-    return True
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
 
-
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles incoming video messages and document files."""
-    message = update.message
-
-    if message.video:
-        file_obj = message.video
-        original_filename = message.video.file_name or "input_video.mp4"
-    elif message.document:
-        file_obj = message.document
-        original_filename = message.document.file_name or "input_video"
-    else:
+    if data == "action_balance":
+        balance = get_user_balance(user_id)
+        await query.edit_message_text(
+            text=f"💵 *Current Balance:* `{balance}` Coins",
+            parse_mode="Markdown",
+            reply_markup=build_menu_keyboard()
+        )
         return
 
-    if file_obj.file_size > 20 * 1024 * 1024:
-        await message.reply_text("⚠️ File is too large! Bot API limits file downloads to **20MB** max.")
+    if data == "action_bonus":
+        new_balance = update_user_balance(user_id, 500)
+        await query.edit_message_text(
+            text=f"🎁 *Daily Bonus Claimed!* +500 Coins added.\n💵 *New Balance:* `{new_balance}` Coins",
+            parse_mode="Markdown",
+            reply_markup=build_menu_keyboard()
+        )
         return
 
-    status_msg = await message.reply_text("📥 Downloading your video...")
+    if data.startswith("game_"):
+        game_key = data.split("_")[1]
+        if game_key not in GAMES:
+            return
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        input_path = os.path.join(temp_dir, original_filename)
-        output_path = os.path.join(temp_dir, "converted_video.mp4")
+        bet_amount = 50
+        current_balance = get_user_balance(user_id)
 
-        try:
-            tg_file = await context.bot.get_file(file_obj.file_id)
-            await tg_file.download_to_drive(input_path)
+        if current_balance < bet_amount:
+            await query.edit_message_text(
+                text=f"❌ *Insufficient Balance!* You need at least {bet_amount} coins to play.\nUse the Daily Bonus button to get free coins.",
+                parse_mode="Markdown",
+                reply_markup=build_menu_keyboard()
+            )
+            return
 
-            await status_msg.edit_text("⚙️ Converting video to MP4 format... Please wait.")
+        # Deduct bet upfront
+        update_user_balance(user_id, -bet_amount)
+        game_info = GAMES[game_key]
 
-            success = await convert_to_mp4(input_path, output_path)
+        # Send native animated Telegram dice
+        msg = await context.bot.send_dice(
+            chat_id=query.message.chat_id,
+            emoji=game_info["emoji"]
+        )
 
-            if not success or not os.path.exists(output_path):
-                await status_msg.edit_text("❌ Failed to convert video. The file might be corrupted or unsupported.")
-                return
+        score = msg.dice.value
+        won = False
+        payout = 0
 
-            await status_msg.edit_text("📤 Uploading converted MP4 video...")
+        # Win conditions for Telegram animated dice
+        if game_key == "slots":
+            # Slot value 64 represents jackpot (777)
+            if score == 64:
+                won = True
+                payout = bet_amount * 5
+            elif score in [1, 22, 43]:  # Match 3 of identical icons
+                won = True
+                payout = bet_amount * 3
+        else:
+            # Dice, Darts, Bowling, Basketball, Football: Win on score >= 4
+            if score >= 4:
+                won = True
+                payout = bet_amount * game_info["mult"]
 
-            with open(output_path, "rb") as video_file:
-                await message.reply_video(
-                    video=video_file,
-                    caption="✅ Converted to MP4 successfully!",
-                    supports_streaming=True,
-                )
+        if won:
+            final_balance = update_user_balance(user_id, payout)
+            result_msg = (
+                f"🎉 *YOU WON!*\n"
+                f"Game: {game_info['name']} {game_info['emoji']}\n"
+                f"Score: `{score}`\n"
+                f"Prize: `+{payout}` Coins\n"
+                f"New Balance: `{final_balance}` Coins"
+            )
+        else:
+            final_balance = get_user_balance(user_id)
+            result_msg = (
+                f"💥 *YOU LOST!*\n"
+                f"Game: {game_info['name']} {game_info['emoji']}\n"
+                f"Score: `{score}`\n"
+                f"Loss: `-{bet_amount}` Coins\n"
+                f"New Balance: `{final_balance}` Coins"
+            )
 
-            await status_msg.delete()
-
-        except Exception as e:
-            logger.exception("An error occurred during processing:")
-            await status_msg.edit_text(f"❌ An error occurred: `{str(e)}`", parse_mode="Markdown")
-
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=result_msg,
+            parse_mode="Markdown",
+            reply_markup=build_menu_keyboard()
+        )
 
 def main():
-    if not TELEGRAM_TOKEN:
-        raise ValueError("BOT_TOKEN environment variable is not set.")
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("No BOT_TOKEN environment variable found!")
+        return
 
-    # Initialize application with post_init hook
-    app = (
-        ApplicationBuilder()
-        .token(TELEGRAM_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    app = Application.builder().token(token).build()
 
-    # Command Handlers
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("about", about_command))
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Media Message Handler
-    app.add_handler(
-        MessageHandler(
-            filters.VIDEO | filters.Document.Category("video"),
-            handle_video,
-        )
-    )
-
-    logger.info("Bot started polling...")
+    logger.info("Bot started successfully...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()

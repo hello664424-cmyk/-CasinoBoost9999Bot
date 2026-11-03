@@ -86,23 +86,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    # Instant delivery of the welcome screen & games to satisfy ad review destination guidelines
+    # Combined single-message response for instant ad crawler validation
     welcome_text = (
         f"👋 សួស្តី <b>{user.first_name}</b> មកកាន់ Casino Boost Bot!\n\n"
-        f"💳 ប្រាក់សមតុល្យរបស់អ្នក: <b>${user_data['balance']:.2f}</b>\n"
-        "👇 <b>ជ្រើសរើសហ្គេមកាស៊ីណូបង្រ្កាបសំណាងរបស់អ្នកខាងក្រោមនេះ៖</b>"
+        f"💳 ប្រាក់សមតុល្យរបស់អ្នក: <b>${user_data['balance']:.2f}</b>\n\n"
+        "🎰 <b>លេងកាស៊ីណូឥឡូវនេះ ($10 ក្នុងមួយការភ្នាល់):</b>"
     )
     
-    # Send main keyboard and instant game menu to satisfy reviewer criteria
+    # Send both the persistent keyboard AND the inline game buttons in one clean response
     if update.callback_query:
         await update.callback_query.message.reply_text(
             welcome_text, 
-            reply_markup=build_main_keyboard(), 
+            reply_markup=build_games_inline_keyboard(), 
             parse_mode="HTML"
         )
-        await update.callback_query.message.reply_text(
-            "🎰 <b>លេងកាស៊ីណូឥឡូវនេះ ($10 ក្នុងមួយការភ្នាល់):</b>",
-            reply_markup=build_games_inline_keyboard(),
+    else:
+        await update.message.reply_text(
+            welcome_text, 
+            reply_markup=build_games_inline_keyboard(), 
             parse_mode="HTML"
         )
     else:

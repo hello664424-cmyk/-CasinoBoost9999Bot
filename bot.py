@@ -279,7 +279,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     logger.info("Starting Telegram Bot long-polling...")
-    app.run_polling(skip_pending=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

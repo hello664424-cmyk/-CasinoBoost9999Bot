@@ -1,192 +1,237 @@
 import os
-import logging
-from typing import Dict
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+import random
+import time
+from dotenv import load_dotenv
+import telebot
+from telebot import types
 
-# Setup logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-# Simple in-memory user database
-# In production, replace this dictionary with PostgreSQL or SQLite
-users_db: Dict[int, int] = {}
-DEFAULT_BALANCE = 1000
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN is missing from environment variables!")
 
-# Game emoji mappings for native Telegram animated dice
-GAMES = {
-    "slots": {"emoji": "🎰", "name": "Slots", "mult": 3},
-    "dice": {"emoji": "🎲", "name": "Dice", "mult": 2},
-    "bowling": {"emoji": "🎳", "name": "Bowling", "mult": 2},
-    "basketball": {"emoji": "🏀", "name": "Basketball", "mult": 2},
-    "darts": {"emoji": "🎯", "name": "Darts", "mult": 2},
-    "football": {"emoji": "⚽", "name": "Football", "mult": 2},
-}
+bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
-def get_user_balance(user_id: int) -> int:
+# In-memory storage for user data
+# Structure: {user_id: {"balance": float, "referrals": int}}
+users_db = {}
+
+
+def get_user_data(user_id: int) -> dict:
+    """Retrieve or initialize user data."""
     if user_id not in users_db:
-        users_db[user_id] = DEFAULT_BALANCE
+        users_db[user_id] = {"balance": 100.0, "referrals": 0}
     return users_db[user_id]
 
-def update_user_balance(user_id: int, amount: int) -> int:
-    current = get_user_balance(user_id)
-    users_db[user_id] = max(0, current + amount)
-    return users_db[user_id]
 
-def build_menu_keyboard():
-    keyboard = [
-        [
-            InlineKeyboardButton("🎰 Slots", callback_data="game_slots"),
-            InlineKeyboardButton("🎲 Dice", callback_data="game_dice"),
-        ],
-        [
-            InlineKeyboardButton("🎳 Bowling", callback_data="game_bowling"),
-            InlineKeyboardButton("🎯 Darts", callback_data="game_darts"),
-        ],
-        [
-            InlineKeyboardButton("🏀 Basketball", callback_data="game_basketball"),
-            InlineKeyboardButton("⚽ Football", callback_data="game_football"),
-        ],
-        [
-            InlineKeyboardButton("💰 Balance", callback_data="action_balance"),
-            InlineKeyboardButton("🎁 Daily Bonus (+500)", callback_data="action_bonus"),
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+def build_main_keyboard() -> types.ReplyKeyboardMarkup:
+    """Creates the main persistent bottom keyboard."""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        types.KeyboardButton("🎰 Casino Games"),
+        types.KeyboardButton("💰 Wallet"),
+        types.KeyboardButton("🚀 Boost & Referral"),
+        types.KeyboardButton("🎁 Daily Bonus")
+    )
+    return markup
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    balance = get_user_balance(user.id)
-    
+
+def build_games_inline_keyboard() -> types.InlineKeyboardMarkup:
+    """Creates the inline keyboard for choosing casino games."""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🎲 Dice Roll", callback_data="game_dice"),
+        types.InlineKeyboardButton("🎰 Slot Machine", callback_data="game_slots"),
+        types.InlineKeyboardButton("🎯 Darts", callback_data="game_darts"),
+        types.InlineKeyboardButton("⚽ Penalty Kick", callback_data="game_football"),
+        types.InlineKeyboardButton("🏀 Basketball", callback_data="game_basketball"),
+        types.InlineKeyboardButton("🪙 Coin Flip (50/50)", callback_data="game_coinflip")
+    )
+    return markup
+
+
+# --- COMMAND HANDLERS ---
+
+@bot.message_handler(commands=['start'])
+def handle_start(message: types.Message):
+    user_id = message.from_user.id
+    user_data = get_user_data(user_id)
+
+    # Handle Referral tracking via /start <referrer_id>
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        referrer_id = int(args[1])
+        if referrer_id != user_id and referrer_id in users_db:
+            # Reward referrer once
+            users_db[referrer_id]["balance"] += 50.0
+            users_db[referrer_id]["referrals"] += 1
+            try:
+                bot.send_message(
+                    referrer_id, 
+                    "🎉 <b>New Referral!</b> You earned <b>+$50</b> for inviting a user!"
+                )
+            except Exception:
+                pass
+
     welcome_text = (
-        f"🎰 *Welcome to the Telegram Casino, {user.first_name}!*\n\n"
-        f"💵 *Your Balance:* `{balance}` Coins\n\n"
-        "Select a game below to place your bet (Default Bet: 50 Coins):"
+        f"👋 Welcome to <b>Casino Boost Bot</b>, {message.from_user.first_name}!\n\n"
+        f"💳 Your Starting Balance: <b>${user_data['balance']:.2f}</b>\n"
+        "Play games, boost your balance, and invite friends to earn rewards!"
     )
-    
-    await update.message.reply_text(
-        text=welcome_text,
-        parse_mode="Markdown",
-        reply_markup=build_menu_keyboard()
+    bot.send_message(user_id, welcome_text, reply_markup=build_main_keyboard())
+
+
+@bot.message_handler(func=lambda msg: msg.text == "🎰 Casino Games")
+def show_casino_menu(message: types.Message):
+    bot.send_message(
+        message.chat.id, 
+        "🎰 <b>Select a Casino Game to Play ($10 per roll/bet):</b>", 
+        reply_markup=build_games_inline_keyboard()
     )
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    data = query.data
 
-    if data == "action_balance":
-        balance = get_user_balance(user_id)
-        await query.edit_message_text(
-            text=f"💵 *Current Balance:* `{balance}` Coins",
-            parse_mode="Markdown",
-            reply_markup=build_menu_keyboard()
+@bot.message_handler(func=lambda msg: msg.text == "💰 Wallet")
+def show_wallet(message: types.Message):
+    user_data = get_user_data(message.from_user.id)
+    text = (
+        "💼 <b>Your Casino Wallet</b>\n\n"
+        f"• Current Balance: <b>${user_data['balance']:.2f}</b>\n"
+        f"• Total Referrals: <b>{user_data['referrals']} users</b>"
+    )
+    bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(func=lambda msg: msg.text == "🚀 Boost & Referral")
+def show_referral(message: types.Message):
+    user_id = message.from_user.id
+    bot_info = bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+
+    text = (
+        "🚀 <b>Boost Your Balance!</b>\n\n"
+        "Invite your friends to the bot and get free bonus coins!\n"
+        "🎁 <b>Reward:</b> <b>+$50.00</b> for every friend that joins.\n\n"
+        f"🔗 <b>Your Invite Link:</b>\n<code>{ref_link}</code>"
+    )
+    bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(func=lambda msg: msg.text == "🎁 Daily Bonus")
+def claim_daily_bonus(message: types.Message):
+    user_data = get_user_data(message.from_user.id)
+    user_data["balance"] += 25.0
+    bot.send_message(
+        message.chat.id, 
+        "🎁 <b>Daily Bonus Claimed!</b>\nAdded <b>+$25.00</b> to your wallet."
+    )
+
+
+# --- GAME LOGIC (INLINE CALLBACK HANDLERS) ---
+
+BET_AMOUNT = 10.0
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("game_"))
+def handle_game_choice(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    user_data = get_user_data(user_id)
+
+    # Check balance
+    if user_data["balance"] < BET_AMOUNT:
+        bot.answer_callback_query(
+            call.id, 
+            text="❌ Insufficient balance! Invite friends to get more funds.", 
+            show_alert=True
         )
         return
 
-    if data == "action_bonus":
-        new_balance = update_user_balance(user_id, 500)
-        await query.edit_message_text(
-            text=f"🎁 *Daily Bonus Claimed!* +500 Coins added.\n💵 *New Balance:* `{new_balance}` Coins",
-            parse_mode="Markdown",
-            reply_markup=build_menu_keyboard()
-        )
-        return
+    game_type = call.data.replace("game_", "")
 
-    if data.startswith("game_"):
-        game_key = data.split("_")[1]
-        if game_key not in GAMES:
-            return
+    # Deduct Bet
+    user_data["balance"] -= BET_AMOUNT
+    bot.answer_callback_query(call.id, text=f"Bet placed: -${BET_AMOUNT:.2f}")
 
-        bet_amount = 50
-        current_balance = get_user_balance(user_id)
-
-        if current_balance < bet_amount:
-            await query.edit_message_text(
-                text=f"❌ *Insufficient Balance!* You need at least {bet_amount} coins to play.\nUse the Daily Bonus button to get free coins.",
-                parse_mode="Markdown",
-                reply_markup=build_menu_keyboard()
-            )
-            return
-
-        # Deduct bet upfront
-        update_user_balance(user_id, -bet_amount)
-        game_info = GAMES[game_key]
-
-        # Send native animated Telegram dice
-        msg = await context.bot.send_dice(
-            chat_id=query.message.chat_id,
-            emoji=game_info["emoji"]
-        )
-
+    if game_type in ["dice", "slots", "darts", "football", "basketball"]:
+        # Map game to Telegram Native Interactive Animated Dice
+        emoji_map = {
+            "dice": "🎲",
+            "slots": "🎰",
+            "darts": "🎯",
+            "football": "⚽",
+            "basketball": "🏀"
+        }
+        emoji = emoji_map[game_type]
+        
+        # Send animated dice
+        msg = bot.send_dice(call.message.chat.id, emoji=emoji)
         score = msg.dice.value
-        won = False
-        payout = 0
+        time.sleep(3)  # Wait for animation to finish
 
-        # Win conditions for Telegram animated dice
-        if game_key == "slots":
-            # Slot value 64 represents jackpot (777)
+        # Calculate result based on dice score
+        if game_type == "slots":
+            # 64 = jackpot (777)
             if score == 64:
-                won = True
-                payout = bet_amount * 5
-            elif score in [1, 22, 43]:  # Match 3 of identical icons
-                won = True
-                payout = bet_amount * 3
-        else:
-            # Dice, Darts, Bowling, Basketball, Football: Win on score >= 4
+                payout = 100.0
+                result_text = "🎉 <b>JACKPOT! 777!</b> You won <b>+$100.00</b>!"
+            elif score in [1, 22, 43]:  # Minor wins
+                payout = 25.0
+                result_text = "✨ <b>Match!</b> You won <b>+$25.00</b>!"
+            else:
+                payout = 0.0
+                result_text = "❌ No match! Try again."
+        
+        elif game_type == "dice":
             if score >= 4:
-                won = True
-                payout = bet_amount * game_info["mult"]
+                payout = 20.0
+                result_text = f"🎯 Rolled <b>{score}</b>! You won <b>+$20.00</b>!"
+            else:
+                payout = 0.0
+                result_text = f"📉 Rolled <b>{score}</b>. Better luck next time!"
 
-        if won:
-            final_balance = update_user_balance(user_id, payout)
-            result_msg = (
-                f"🎉 *YOU WON!*\n"
-                f"Game: {game_info['name']} {game_info['emoji']}\n"
-                f"Score: `{score}`\n"
-                f"Prize: `+{payout}` Coins\n"
-                f"New Balance: `{final_balance}` Coins"
-            )
-        else:
-            final_balance = get_user_balance(user_id)
-            result_msg = (
-                f"💥 *YOU LOST!*\n"
-                f"Game: {game_info['name']} {game_info['emoji']}\n"
-                f"Score: `{score}`\n"
-                f"Loss: `-{bet_amount}` Coins\n"
-                f"New Balance: `{final_balance}` Coins"
-            )
+        elif game_type == "darts":
+            if score == 6:  # Bullseye
+                payout = 30.0
+                result_text = "🎯 <b>BULLSEYE!</b> You won <b>+$30.00</b>!"
+            elif score >= 3:
+                payout = 15.0
+                result_text = f"🎯 Hit score <b>{score}</b>! You won <b>+$15.00</b>!"
+            else:
+                payout = 0.0
+                result_text = "❌ Missed the target!"
 
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=result_msg,
-            parse_mode="Markdown",
-            reply_markup=build_menu_keyboard()
+        elif game_type in ["football", "basketball"]:
+            if score >= 4:  # Goal / Swish
+                payout = 20.0
+                result_text = "⚽/🏀 <b>SCORE!</b> You won <b>+$20.00</b>!"
+            else:
+                payout = 0.0
+                result_text = "❌ Missed!"
+
+        user_data["balance"] += payout
+        bot.send_message(
+            call.message.chat.id, 
+            f"{result_text}\n💰 New Balance: <b>${user_data['balance']:.2f}</b>",
+            reply_markup=build_games_inline_keyboard()
         )
 
-def main():
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        logger.error("No BOT_TOKEN environment variable found!")
-        return
+    elif game_type == "coinflip":
+        outcome = random.choice(["Heads", "Tails"])
+        win = random.choice([True, False])
 
-    app = Application.builder().token(token).build()
+        if win:
+            payout = 20.0
+            result_text = f"🪙 It landed on <b>{outcome}</b>! You WON <b>+$20.00</b>!"
+            user_data["balance"] += payout
+        else:
+            result_text = f"🪙 It landed on <b>{outcome}</b>. You Lost!"
 
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+        bot.send_message(
+            call.message.chat.id,
+            f"{result_text}\n💰 New Balance: <b>${user_data['balance']:.2f}</b>",
+            reply_markup=build_games_inline_keyboard()
+        )
 
-    logger.info("Bot started successfully...")
-    app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    print("Bot is running...")
+    bot.infinity_polling(skip_pending=True)

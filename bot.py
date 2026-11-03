@@ -74,8 +74,9 @@ def handle_start(message: types.Message):
             except Exception:
                 pass
 
-  welcome_text = (
-        f"👋សួស្តី <b>{message.from_user.first_name}</b> មកកាន់ Casino Boost Bot!\n\n"
+    # Updated Khmer Welcome Text to match Telegram ad language settings
+    welcome_text = (
+        f"👋 សួស្តី <b>{message.from_user.first_name}</b> មកកាន់ Casino Boost Bot!\n\n"
         f"💳 ប្រាក់សមតុល្យរបស់អ្នក: <b>${user_data['balance']:.2f}</b>\n"
         "លេងហ្គេម បន្ថែមសមតុល្យ និងអញ្ជើញមិត្តភក្តិเพื่อรับរង្វាន់!"
     )

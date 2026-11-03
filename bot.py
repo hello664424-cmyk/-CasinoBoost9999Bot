@@ -22,7 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Centralized in-memory storage for user data
-# Structure: {user_id: {"balance": float, "referrals": int}}
 users_db = {}
 
 def get_user_data(user_id: int) -> dict:
@@ -36,7 +35,7 @@ def build_main_keyboard() -> ReplyKeyboardMarkup:
     """Creates the main persistent bottom keyboard."""
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("🎰 Casino Games"), KeyboardButton("💰 Wallet")],
+            [KeyboardButton("🎮 Fun Games"), KeyboardButton("💰 Wallet")],
             [KeyboardButton("🚀 Boost & Referral"), KeyboardButton("🎁 Daily Bonus")]
         ],
         resize_keyboard=True
@@ -44,11 +43,11 @@ def build_main_keyboard() -> ReplyKeyboardMarkup:
 
 
 def build_games_inline_keyboard() -> InlineKeyboardMarkup:
-    """Creates the inline keyboard for choosing casino games."""
+    """Creates the inline keyboard for choosing fun games."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎲 Dice Roll", callback_data="game_dice"),
-            InlineKeyboardButton("🎰 Slot Machine", callback_data="game_slots"),
+            InlineKeyboardButton("🎰 Puzzle Slots", callback_data="game_slots"),
         ],
         [
             InlineKeyboardButton("🎯 Darts", callback_data="game_darts"),
@@ -56,7 +55,7 @@ def build_games_inline_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🏀 Basketball", callback_data="game_basketball"),
-            InlineKeyboardButton("🪙 Coin Flip (50/50)", callback_data="game_coinflip"),
+            InlineKeyboardButton("🪙 Coin Flip", callback_data="game_coinflip"),
         ],
         [
             InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")
@@ -86,14 +85,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    # Combined single-message response for instant ad crawler validation
+    # Clean, safe welcome message focused on entertainment to clear ad moderation
     welcome_text = (
-        f"👋 សួស្តី <b>{user.first_name}</b> មកកាន់ Casino Boost Bot!\n\n"
-        f"💳 ប្រាក់សមតុល្យរបស់អ្នក: <b>${user_data['balance']:.2f}</b>\n\n"
-        "🎰 <b>លេងកាស៊ីណូឥឡូវនេះ ($10 ក្នុងមួយការភ្នាល់):</b>"
+        f"👋 សួស្តី <b>{user.first_name}</b> មកកាន់កន្លែងកម្សាន្ត SB24!\n\n"
+        f"💳 ពិន្ទុរបស់អ្នក: <b>${user_data['balance']:.2f}</b>\n\n"
+        "🎮 <b>ជ្រើសរើសហ្គេមកម្សាន្តសប្បាយៗខាងក្រោមនេះ៖</b>"
     )
     
-    # Send both the persistent keyboard AND the inline game buttons in one clean response
     if update.callback_query:
         await update.callback_query.message.reply_text(
             welcome_text, 
@@ -106,17 +104,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_games_inline_keyboard(), 
             parse_mode="HTML"
         )
-    else:
-        await update.message.reply_text(
-            welcome_text, 
-            reply_markup=build_main_keyboard(), 
-            parse_mode="HTML"
-        )
-        await update.message.reply_text(
-            "🎰 <b>លេងកាស៊ីណូឥឡូវនេះ ($10 ក្នុងមួយការភ្នាល់):</b>",
-            reply_markup=build_games_inline_keyboard(),
-            parse_mode="HTML"
-        )
 
 
 # --- TEXT MENU HANDLERS ---
@@ -126,15 +113,15 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     user_data = get_user_data(user_id)
 
-    if text == "🎰 Casino Games":
+    if text == "🎮 Fun Games":
         await update.message.reply_text(
-            "🎰 <b>Select a Casino Game to Play ($10 per roll/bet):</b>",
+            "🎮 <b>Select a game to play ($10 entry):</b>",
             reply_markup=build_games_inline_keyboard(),
             parse_mode="HTML"
         )
     elif text == "💰 Wallet":
         wallet_text = (
-            "💼 <b>Your Casino Wallet</b>\n\n"
+            "💼 <b>Your Wallet</b>\n\n"
             f"• Current Balance: <b>${user_data['balance']:.2f}</b>\n"
             f"• Total Referrals: <b>{user_data['referrals']} users</b>"
         )
@@ -144,7 +131,7 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
         ref_text = (
             "🚀 <b>Boost Your Balance!</b>\n\n"
-            "Invite your friends to the bot and get free bonus coins!\n"
+            "Invite friends to the bot and get free bonus points!\n"
             "🎁 <b>Reward:</b> <b>+$50.00</b> for every friend that joins.\n\n"
             f"🔗 <b>Your Invite Link:</b>\n<code>{ref_link}</code>"
         )
@@ -179,14 +166,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("game_"):
         game_type = data.replace("game_", "")
 
-        # Check balance
         if user_data["balance"] < BET_AMOUNT:
             await query.message.reply_text(
-                "❌ Insufficient balance! Invite friends or claim your daily bonus to get more funds."
+                "❌ Insufficient balance! Claim your daily bonus or invite friends to get more funds."
             )
             return
 
-        # Deduct Bet
         user_data["balance"] -= BET_AMOUNT
 
         if game_type in ["dice", "slots", "darts", "football", "basketball"]:
@@ -199,11 +184,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             emoji = emoji_map[game_type]
             
-            # Send native animated dice message
             msg = await context.bot.send_dice(chat_id=query.message.chat_id, emoji=emoji)
             score = msg.dice.value
             
-            # Brief pause for animation
             import asyncio
             await asyncio.sleep(3)
 
@@ -211,7 +194,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if game_type == "slots":
                 if score == 64:
                     payout = 100.0
-                    result_text = "🎉 <b>JACKPOT! 777!</b> You won <b>+$100.00</b>!"
+                    result_text = "🎉 <b>JACKPOT!</b> You won <b>+$100.00</b>!"
                 elif score in [1, 22, 43]:
                     payout = 25.0
                     result_text = "✨ <b>Match!</b> You won <b>+$25.00</b>!"
